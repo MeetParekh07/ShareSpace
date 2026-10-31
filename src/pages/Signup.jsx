@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
   Eye,
   EyeOff,
@@ -11,19 +11,78 @@ import {
   ArrowRight,
   Share2,
 } from "lucide-react";
+
 import Button from "../components/ui/Button";
+import { useAuth } from "../context/AuthContext";
 
 function Signup() {
   const [role, setRole] = useState("borrower");
   const [showPassword, setShowPassword] = useState(false);
   const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  function handleSubmit(event) {
+  const { signUp } = useAuth();
+  const navigate = useNavigate();
+
+  async function handleSubmit(event) {
     event.preventDefault();
 
-    setMessage(
-      `Demo mode: Your ${role} registration form is working. Backend authentication will be connected later.`,
-    );
+    setMessage("");
+    setError("");
+    setLoading(true);
+
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+
+    const fullName = formData.get("fullName").trim();
+    const email = formData.get("email").trim();
+    const password = formData.get("password");
+
+    try {
+      const { data, error } = await signUp({
+        full_name: fullName,
+        email,
+        password,
+        role,
+      });
+
+      if (error) throw error;
+
+      // Clear signup fields
+      form.reset();
+      setRole("borrower");
+      setShowPassword(false);
+
+      if (data.session) {
+        setMessage("Account created successfully! Redirecting...");
+
+        // Give the authentication context time to update
+        setTimeout(() => {
+          navigate(
+            role === "owner" ? "/owner/dashboard" : "/borrower/dashboard",
+            { replace: true },
+          );
+        }, 500);
+      } else {
+        setMessage("Account created! Please verify your email, then log in.");
+
+        setTimeout(() => {
+          navigate("/login", {
+            replace: true,
+            state: {
+              email,
+              message:
+                "Account created successfully! Please verify your email before logging in.",
+            },
+          });
+        }, 1500);
+      }
+    } catch (err) {
+      setError(err.message || "Registration failed. Please try again.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -61,6 +120,7 @@ function Signup() {
 
             <input
               id="fullName"
+              name="fullName"
               type="text"
               placeholder="Enter your full name"
               required
@@ -84,6 +144,7 @@ function Signup() {
 
             <input
               id="signupEmail"
+              name="email"
               type="email"
               placeholder="you@example.com"
               required
@@ -111,22 +172,14 @@ function Signup() {
             >
               <div className="flex items-center justify-between">
                 <HandHelping
-                  className={`h-7 w-7 ${
-                    role === "borrower" ? "text-brand-600" : "text-slate-500"
-                  }`}
+                  className={`h-7 w-7 ${role === "borrower" ? "text-brand-600" : "text-slate-500"}`}
                 />
-
                 <span
-                  className={`h-4 w-4 rounded-full border-2 ${
-                    role === "borrower"
-                      ? "border-brand-600 bg-brand-600 ring-2 ring-white"
-                      : "border-slate-300"
-                  }`}
+                  className={`h-4 w-4 rounded-full border-2 ${role === "borrower" ? "border-brand-600 bg-brand-600 ring-2 ring-white" : "border-slate-300"}`}
                 />
               </div>
 
               <h3 className="mt-4 font-semibold text-slate-900">Borrower</h3>
-
               <p className="mt-1 text-xs leading-5 text-slate-500">
                 Discover and borrow resources from others.
               </p>
@@ -144,22 +197,14 @@ function Signup() {
             >
               <div className="flex items-center justify-between">
                 <PackagePlus
-                  className={`h-7 w-7 ${
-                    role === "owner" ? "text-brand-600" : "text-slate-500"
-                  }`}
+                  className={`h-7 w-7 ${role === "owner" ? "text-brand-600" : "text-slate-500"}`}
                 />
-
                 <span
-                  className={`h-4 w-4 rounded-full border-2 ${
-                    role === "owner"
-                      ? "border-brand-600 bg-brand-600 ring-2 ring-white"
-                      : "border-slate-300"
-                  }`}
+                  className={`h-4 w-4 rounded-full border-2 ${role === "owner" ? "border-brand-600 bg-brand-600 ring-2 ring-white" : "border-slate-300"}`}
                 />
               </div>
 
               <h3 className="mt-4 font-semibold text-slate-900">Owner</h3>
-
               <p className="mt-1 text-xs leading-5 text-slate-500">
                 List your resources and manage requests.
               </p>
@@ -181,6 +226,7 @@ function Signup() {
 
             <input
               id="signupPassword"
+              name="password"
               type={showPassword ? "text" : "password"}
               placeholder="Create a password"
               required
@@ -210,14 +256,24 @@ function Signup() {
         {message && (
           <p
             role="status"
-            className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm leading-5 text-blue-700"
+            className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm leading-5 text-green-700"
           >
             {message}
           </p>
         )}
 
-        <Button type="submit" size="lg" className="w-full">
-          Create account <ArrowRight className="h-4 w-4" />
+        {error && (
+          <p
+            role="alert"
+            className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm leading-5 text-red-700"
+          >
+            {error}
+          </p>
+        )}
+
+        <Button type="submit" size="lg" className="w-full" disabled={loading}>
+          {loading ? "Creating account..." : "Create account"}
+          {!loading && <ArrowRight className="h-4 w-4" />}
         </Button>
       </form>
 

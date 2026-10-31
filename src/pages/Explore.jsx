@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Search,
@@ -13,15 +14,12 @@ import {
   Dumbbell,
   ArrowRight,
   X,
-  Clock3,
   RotateCcw,
+  Clock3,
 } from "lucide-react";
 
-import {
-  resources,
-  categories,
-  locations,
-} from "../data/resources";
+import { categories, locations } from "../data/resources";
+import { supabase } from "../lib/supabase";
 
 const categoryIcons = {
   Electronics: Laptop,
@@ -42,13 +40,43 @@ const categoryColors = {
 };
 
 function Explore() {
+  const [resources, setResources] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
   const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("All Categories");
   const [selectedLocation, setSelectedLocation] = useState("All Locations");
   const [availableOnly, setAvailableOnly] = useState(false);
   const [sortBy, setSortBy] = useState("newest");
 
-  // Apply all selected filters to the resource list.
+  // Fetch resources from Supabase
+  useEffect(() => {
+    async function fetchResources() {
+      setLoading(true);
+      setError("");
+
+      const { data, error } = await supabase
+        .from("resources")
+        .select("*")
+        .eq("is_active", true)
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        console.error("Error fetching resources:", error.message);
+        setError("Could not load resources. Please try again.");
+        setResources([]);
+      } else {
+        setResources(data || []);
+      }
+
+      setLoading(false);
+    }
+
+    fetchResources();
+  }, []);
+
+  // Apply filters
   const filteredResources = useMemo(() => {
     let result = [...resources];
 
@@ -60,9 +88,11 @@ function Explore() {
           resource.name,
           resource.description,
           resource.category,
-          resource.owner,
           resource.location,
-        ].some((value) => value.toLowerCase().includes(query))
+          resource.condition,
+        ].some((value) =>
+          String(value || "").toLowerCase().includes(query)
+        )
       );
     }
 
@@ -80,7 +110,7 @@ function Explore() {
 
     if (availableOnly) {
       result = result.filter(
-        (resource) => resource.availability === "Available"
+        (resource) => Number(resource.total_copies) > 0
       );
     }
 
@@ -89,7 +119,14 @@ function Explore() {
     }
 
     return result;
-  }, [search, selectedCategory, selectedLocation, availableOnly, sortBy]);
+  }, [
+    resources,
+    search,
+    selectedCategory,
+    selectedLocation,
+    availableOnly,
+    sortBy,
+  ]);
 
   const hasActiveFilters =
     search.trim() !== "" ||
@@ -107,6 +144,7 @@ function Explore() {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50/50 to-slate-100/50 pb-16">
+
       {/* Page Heading & Search Banner */}
       <section className="border-b border-slate-200/80 bg-white shadow-xs">
         <div className="mx-auto max-w-7xl px-5 py-10 md:px-8 md:py-14">
@@ -331,17 +369,37 @@ function Explore() {
               </div>
             )}
 
-            {/* Resource Cards Grid */}
-            {filteredResources.length > 0 ? (
+            {/* Loading State */}
+            {loading ? (
+              <div className="mt-8 rounded-2xl border border-slate-200 bg-white py-16 text-center shadow-sm">
+                <p className="text-sm font-medium text-slate-500">
+                  Loading resources...
+                </p>
+              </div>
+            ) : error ? (
+              <div className="mt-8 rounded-2xl border border-red-200 bg-white px-6 py-12 text-center">
+                <p className="font-semibold text-red-600">{error}</p>
+                <button
+                  type="button"
+                  onClick={() => window.location.reload()}
+                  className="mt-4 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-indigo-700"
+                >
+                  Try again
+                </button>
+              </div>
+            ) : filteredResources.length > 0 ? (
+              /* Resource Cards Grid */
               <div className="mt-6 grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
                 {filteredResources.map((resource) => {
-                  const Icon = categoryIcons[resource.category] || Package;
+                  const Icon =
+                    categoryIcons[resource.category] || Package;
+
                   const iconColor =
                     categoryColors[resource.category] ||
                     "bg-indigo-50 text-indigo-600 border border-indigo-200/60";
 
                   const isAvailable =
-                    resource.availability === "Available";
+                    Number(resource.total_copies) > 0;
 
                   return (
                     <article
@@ -349,11 +407,19 @@ function Explore() {
                       className="group flex flex-col justify-between overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm transition-all duration-300 hover:-translate-y-1 hover:border-indigo-300 hover:shadow-md"
                     >
                       <div>
-                        {/* Visual Header Area */}
-                        <div className="relative flex h-44 items-center justify-center bg-gradient-to-br from-slate-100/80 via-indigo-50/40 to-indigo-100/50">
-                          <div className={`rounded-2xl p-5 shadow-sm transition-transform duration-300 group-hover:scale-110 ${iconColor}`}>
-                            <Icon className="h-12 w-12" strokeWidth={1.8} />
-                          </div>
+                        {/* Resource Image or Category Icon */}
+                        <div className="relative flex h-44 items-center justify-center overflow-hidden bg-gradient-to-br from-slate-100/80 via-indigo-50/40 to-indigo-100/50">
+                          {resource.image_url ? (
+                            <img
+                              src={resource.image_url}
+                              alt={resource.name}
+                              className="h-full w-full object-cover"
+                            />
+                          ) : (
+                            <div className={`rounded-2xl p-5 shadow-sm transition-transform duration-300 group-hover:scale-110 ${iconColor}`}>
+                              <Icon className="h-12 w-12" strokeWidth={1.8} />
+                            </div>
+                          )}
 
                           <span
                             className={`absolute right-3.5 top-3.5 rounded-full px-3 py-1 text-xs font-bold uppercase tracking-wider shadow-xs ${
@@ -362,7 +428,7 @@ function Explore() {
                                 : "bg-amber-50 text-amber-700 border border-amber-200/60"
                             }`}
                           >
-                            {resource.availability}
+                            {isAvailable ? "Available" : "Unavailable"}
                           </span>
                         </div>
 
@@ -383,17 +449,30 @@ function Explore() {
                           <div className="mt-5 space-y-2.5 border-t border-slate-100 pt-4">
                             <p className="flex items-center gap-2 text-xs font-medium text-slate-600">
                               <Package className="h-4 w-4 shrink-0 text-indigo-500" />
-                              <span className="truncate">Shared by {resource.owner}</span>
+                              <span className="truncate">
+                                Shared by community member
+                              </span>
                             </p>
 
                             <p className="flex items-center gap-2 text-xs font-medium text-slate-600">
                               <MapPin className="h-4 w-4 shrink-0 text-indigo-500" />
-                              <span className="truncate">{resource.location}</span>
+                              <span className="truncate">
+                                {resource.location}
+                              </span>
                             </p>
 
                             <p className="flex items-center gap-2 text-xs font-medium text-slate-600">
                               <Clock3 className="h-4 w-4 shrink-0 text-indigo-500" />
-                              <span>Up to {resource.maxBorrowDays} days borrowing</span>
+                              <span>
+                                Condition: {resource.condition || "Not specified"}
+                              </span>
+                            </p>
+
+                            <p className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                              <Package className="h-4 w-4 shrink-0 text-indigo-500" />
+                              <span>
+                                {resource.total_copies} copies
+                              </span>
                             </p>
                           </div>
                         </div>

@@ -152,7 +152,7 @@ function Home() {
             </div>
           </div>
 
-          {/* Hero visual */}
+          {/* Hero Visual */}
           <div className="relative">
             <div className="absolute -left-8 -top-8 h-40 w-40 rounded-full bg-indigo-200/50 blur-3xl" />
             <div className="absolute -bottom-8 -right-8 h-40 w-40 rounded-full bg-blue-200/50 blur-3xl" />
@@ -167,6 +167,7 @@ function Home() {
                     Find what you need
                   </h2>
                 </div>
+
                 <div className="rounded-xl bg-indigo-50 p-3 text-brand-600">
                   <PackagePlus className="h-6 w-6" />
                 </div>
@@ -217,7 +218,7 @@ function Home() {
       </section>
 
       {/* Categories */}
-      <section className="mx-auto max-w-7xl px-5 py-14 md:py-16 md:px-8">
+      <section className="mx-auto max-w-7xl px-5 py-14 md:px-8 md:py-16">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <p className="text-sm font-semibold uppercase tracking-wider text-brand-600">
@@ -264,7 +265,7 @@ function Home() {
         </div>
       </section>
 
-      {/* Featured resources */}
+      {/* Featured Resources - Static Mock Data */}
       <section className="bg-slate-50 py-14 md:py-16">
         <div className="mx-auto max-w-7xl px-5 md:px-8">
           <div className="flex flex-wrap items-end justify-between gap-4">
@@ -308,6 +309,7 @@ function Home() {
                       <span className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-medium text-brand-700">
                         {resource.category}
                       </span>
+
                       <span className="flex items-center gap-1 text-xs font-medium text-green-700">
                         <span className="h-2 w-2 rounded-full bg-green-500" />
                         {resource.availability}
@@ -328,10 +330,11 @@ function Home() {
                     </p>
 
                     <Link
-                      to={`/resources/${resource.id}`}
+                      to="/explore"
                       className="mt-5 flex w-full items-center justify-center gap-2 rounded-lg border border-slate-200 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-brand-600 hover:text-brand-600"
                     >
-                      View details <ArrowRight className="h-4 w-4" />
+                      Explore resources
+                      <ArrowRight className="h-4 w-4" />
                     </Link>
                   </div>
                 </article>
@@ -341,8 +344,8 @@ function Home() {
         </div>
       </section>
 
-      {/* How it works */}
-      <section className="mx-auto max-w-7xl px-5 py-14 md:py-16 md:px-8">
+      {/* How It Works */}
+      <section className="mx-auto max-w-7xl px-5 py-14 md:px-8 md:py-16">
         <div className="mx-auto max-w-2xl text-center">
           <p className="text-sm font-semibold uppercase tracking-wider text-brand-600">
             Simple process
@@ -420,8 +423,8 @@ function Home() {
         </div>
       </section>
 
-      {/* Call to action */}
-      <section className="px-5 py-12 md:py-14 md:px-8">
+      {/* Call to Action */}
+      <section className="px-5 py-12 md:px-8 md:py-14">
         <div className="mx-auto max-w-7xl overflow-hidden rounded-3xl bg-gradient-to-r from-indigo-600 to-brand-600 px-6 py-10 text-center text-white shadow-lg sm:px-12 md:py-12">
           <h2 className="text-3xl font-bold sm:text-4xl">
             Have something worth sharing?

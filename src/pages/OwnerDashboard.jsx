@@ -1,5 +1,5 @@
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Package,
@@ -16,11 +16,12 @@ import {
   Inbox,
 } from "lucide-react";
 
-import { ownerRequests } from "../data/ownerData";
-import { useAppContext } from "../context/AppContext";
+import { supabase } from "../lib/supabase";
+import { useAuth } from "../context/AuthContext";
 
 const statusStyles = {
   available: "bg-green-100 text-green-700",
+  unavailable: "bg-amber-100 text-amber-700",
   borrowed: "bg-blue-100 text-blue-700",
   pending: "bg-amber-100 text-amber-700",
   approved: "bg-green-100 text-green-700",
@@ -28,6 +29,8 @@ const statusStyles = {
 };
 
 const formatDate = (date) => {
+  if (!date) return "Not specified";
+
   return new Date(`${date}T00:00:00`).toLocaleDateString("en-IN", {
     day: "numeric",
     month: "short",
@@ -47,41 +50,112 @@ function StatCard({ title, value, icon: Icon, color }) {
         </div>
       </div>
 
-      <p className="mt-3 text-3xl font-bold text-gray-900">
-        {value}
-      </p>
+      <p className="mt-3 text-3xl font-bold text-gray-900">{value}</p>
     </div>
   );
 }
 
 function OwnerDashboard() {
-  // Shared resources from AppContext
-  const { resources } = useAppContext();
+  const { user } = useAuth();
 
-  // Local state for borrowing requests
-  const [requests, setRequests] = useState(ownerRequests);
+  const [resources, setResources] = useState([]);
+  const [requests, setRequests] = useState([]);
+
+  const [loading, setLoading] = useState(true);
+  const [updatingRequest, setUpdatingRequest] = useState(null);
+  const [error, setError] = useState("");
 
   const [searchTerm, setSearchTerm] = useState("");
   const [activeFilter, setActiveFilter] = useState("all");
 
-  // Calculate dashboard statistics
+  // Fetch owner's resources and their booking requests
+  useEffect(() => {
+    async function fetchDashboardData() {
+      if (!user) {
+        setLoading(false);
+        return;
+      }
+
+      setLoading(true);
+      setError("");
+
+      try {
+        const { data: resourceData, error: resourceError } =
+          await supabase
+            .from("resources")
+            .select("*")
+            .eq("owner_id", user.id)
+            .order("created_at", { ascending: false });
+
+        if (resourceError) throw resourceError;
+
+        const ownedResources = resourceData || [];
+        setResources(ownedResources);
+
+        const resourceIds = ownedResources.map((resource) => resource.id);
+
+        if (resourceIds.length === 0) {
+          setRequests([]);
+          return;
+        }
+
+        const { data: bookingData, error: bookingError } =
+          await supabase
+            .from("bookings")
+            .select("*")
+            .in("resource_id", resourceIds)
+            .order("requested_at", { ascending: false });
+
+        if (bookingError) throw bookingError;
+
+        const resourceMap = new Map(
+          ownedResources.map((resource) => [
+            resource.id,
+            resource.name,
+          ])
+        );
+
+        const formattedRequests = (bookingData || []).map((booking) => ({
+          ...booking,
+          resourceName:
+            resourceMap.get(booking.resource_id) || "Unknown resource",
+          borrowerName: "Borrower",
+          borrowerId: booking.borrower_id,
+          startDate: booking.start_date,
+          endDate: booking.end_date,
+        }));
+
+        setRequests(formattedRequests);
+      } catch (err) {
+        console.error("Dashboard loading error:", err);
+        setError(err.message || "Unable to load dashboard data.");
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchDashboardData();
+  }, [user]);
+
+  // Dashboard statistics
   const stats = useMemo(() => {
     return {
       total: resources.length,
 
       available: resources.filter(
-        (resource) => resource.status === "available"
+        (resource) =>
+          resource.is_active && Number(resource.total_copies) > 0
       ).length,
 
       pending: requests.filter(
         (request) => request.status === "pending"
       ).length,
 
-      borrowed: resources.filter(
-        (resource) => resource.status === "borrowed"
+      borrowed: requests.filter(
+        (request) => request.status === "approved"
       ).length,
     };
-  }, [requests, resources]);
+  }, [resources, requests]);
 
   // Search resources
   const filteredResources = resources.filter((resource) =>
@@ -94,8 +168,8 @@ function OwnerDashboard() {
   const filteredRequests = requests.filter((request) => {
     const matchesSearch = `
       ${request.resourceName}
-      ${request.borrowerName}
-      ${request.borrowerEmail}
+      ${request.borrowerId}
+      ${request.purpose}
     `
       .toLowerCase()
       .includes(searchTerm.toLowerCase());
@@ -106,8 +180,26 @@ function OwnerDashboard() {
     return matchesSearch && matchesFilter;
   });
 
-  // Approve or reject request
-  const updateRequestStatus = (requestId, newStatus) => {
+  // Approve or reject a request in Supabase
+  async function updateRequestStatus(requestId, newStatus) {
+    setUpdatingRequest(requestId);
+    setError("");
+
+    const { error: updateError } = await supabase
+      .from("bookings")
+      .update({
+        status: newStatus,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", requestId);
+
+    if (updateError) {
+      console.error("Booking update error:", updateError);
+      setError(updateError.message);
+      setUpdatingRequest(null);
+      return;
+    }
+
     setRequests((previousRequests) =>
       previousRequests.map((request) =>
         request.id === requestId
@@ -115,9 +207,21 @@ function OwnerDashboard() {
           : request
       )
     );
-  };
+
+    setUpdatingRequest(null);
+  }
 
   const filters = ["all", "pending", "approved", "rejected"];
+
+  if (loading) {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <p className="text-sm font-medium text-gray-500">
+          Loading your dashboard...
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 px-4 py-8 sm:px-6 lg:px-8">
@@ -148,6 +252,16 @@ function OwnerDashboard() {
           </Link>
         </div>
 
+        {/* Error message */}
+        {error && (
+          <div
+            role="alert"
+            className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700"
+          >
+            {error}
+          </div>
+        )}
+
         {/* Statistics */}
         <section>
           <h2 className="mb-4 text-lg font-semibold text-gray-900">
@@ -177,7 +291,7 @@ function OwnerDashboard() {
             />
 
             <StatCard
-              title="Currently Borrowed"
+              title="Approved Requests"
               value={stats.borrowed}
               icon={Repeat}
               color="bg-blue-100 text-blue-600"
@@ -224,64 +338,70 @@ function OwnerDashboard() {
 
           {/* Resource Cards */}
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            {filteredResources.map((resource) => (
-              <div
-                key={resource.id}
-                className="rounded-xl border border-gray-200 p-4 transition hover:border-indigo-200 hover:shadow-sm"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <h3 className="font-semibold text-gray-900">
-                      {resource.name}
-                    </h3>
+            {filteredResources.map((resource) => {
+              const isAvailable =
+                resource.is_active && Number(resource.total_copies) > 0;
 
-                    <p className="mt-1 text-sm text-gray-500">
-                      {resource.category}
+              return (
+                <div
+                  key={resource.id}
+                  className="rounded-xl border border-gray-200 p-4 transition hover:border-indigo-200 hover:shadow-sm"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="font-semibold text-gray-900">
+                        {resource.name}
+                      </h3>
+
+                      <p className="mt-1 text-sm text-gray-500">
+                        {resource.category}
+                      </p>
+                    </div>
+
+                    <span
+                      className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                        isAvailable
+                          ? statusStyles.available
+                          : statusStyles.unavailable
+                      }`}
+                    >
+                      {isAvailable ? "Available" : "Unavailable"}
+                    </span>
+                  </div>
+
+                  <div className="mt-4 space-y-2 text-sm text-gray-500">
+                    <p className="flex items-center gap-2">
+                      <MapPin size={15} />
+                      {resource.location}
+                    </p>
+
+                    <p>
+                      Condition:{" "}
+                      <span className="font-medium text-gray-700">
+                        {resource.condition}
+                      </span>
+                    </p>
+
+                    <p>
+                      Copies:{" "}
+                      <span className="font-medium text-gray-700">
+                        {resource.total_copies}
+                      </span>
                     </p>
                   </div>
 
-                  <span
-                    className={`rounded-full px-3 py-1 text-xs font-semibold capitalize ${
-                      statusStyles[resource.status] ||
-                      "bg-gray-100 text-gray-600"
-                    }`}
-                  >
-                    {resource.status}
-                  </span>
+                  <div className="mt-4 border-t border-gray-100 pt-3">
+                    <Link
+                      to={`/resources/${resource.id}`}
+                      className="inline-flex items-center gap-2 text-sm font-semibold text-indigo-600 hover:text-indigo-700"
+                    >
+                      <Eye size={16} />
+                      View Resource
+                    </Link>
+                  </div>
                 </div>
-
-                <div className="mt-4 space-y-2 text-sm text-gray-500">
-                  <p className="flex items-center gap-2">
-                    <MapPin size={15} />
-                    {resource.location}
-                  </p>
-
-                  <p>
-                    Condition:{" "}
-                    <span className="font-medium text-gray-700">
-                      {resource.condition}
-                    </span>
-                  </p>
-
-                  <p>
-                    Copies:{" "}
-                    <span className="font-medium text-gray-700">
-                      {resource.totalCopies}
-                    </span>
-                  </p>
-                </div>
-
-                <div className="mt-4 border-t border-gray-100 pt-3">
-                  <Link
-                    to={`/resources/${resource.id}`}
-                    className="inline-flex items-center gap-2 text-sm font-semibold text-indigo-600 hover:text-indigo-700"
-                  >
-                    <Eye size={16} />
-                    View Resource
-                  </Link>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {filteredResources.length === 0 && (
@@ -331,7 +451,7 @@ function OwnerDashboard() {
                 <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
                   <div>
                     <p className="text-xs font-medium text-gray-400">
-                      {request.id}
+                      Request ID: {request.id}
                     </p>
 
                     <h3 className="mt-1 font-semibold text-gray-900">
@@ -342,8 +462,8 @@ function OwnerDashboard() {
                       Requested by {request.borrowerName}
                     </p>
 
-                    <p className="text-sm text-gray-500">
-                      {request.borrowerEmail}
+                    <p className="break-all text-xs text-gray-400">
+                      Borrower ID: {request.borrowerId}
                     </p>
                   </div>
 
@@ -360,7 +480,6 @@ function OwnerDashboard() {
                 <div className="mt-4 grid grid-cols-1 gap-3 text-sm text-gray-500 sm:grid-cols-2">
                   <p className="flex items-center gap-2">
                     <CalendarDays size={16} />
-
                     {formatDate(request.startDate)} –{" "}
                     {formatDate(request.endDate)}
                   </p>
@@ -376,21 +495,25 @@ function OwnerDashboard() {
                   <div className="mt-5 flex flex-wrap gap-3 border-t border-gray-100 pt-4">
                     <button
                       type="button"
+                      disabled={updatingRequest === request.id}
                       onClick={() =>
                         updateRequestStatus(request.id, "approved")
                       }
-                      className="inline-flex items-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-green-700"
+                      className="inline-flex items-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <Check size={16} />
-                      Approve
+                      {updatingRequest === request.id
+                        ? "Updating..."
+                        : "Approve"}
                     </button>
 
                     <button
                       type="button"
+                      disabled={updatingRequest === request.id}
                       onClick={() =>
                         updateRequestStatus(request.id, "rejected")
                       }
-                      className="inline-flex items-center gap-2 rounded-lg bg-red-50 px-4 py-2 text-sm font-semibold text-red-600 transition hover:bg-red-100"
+                      className="inline-flex items-center gap-2 rounded-lg bg-red-50 px-4 py-2 text-sm font-semibold text-red-600 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <X size={16} />
                       Reject
@@ -403,10 +526,7 @@ function OwnerDashboard() {
 
           {filteredRequests.length === 0 && (
             <div className="py-10 text-center">
-              <Inbox
-                size={35}
-                className="mx-auto text-gray-300"
-              />
+              <Inbox size={35} className="mx-auto text-gray-300" />
 
               <p className="mt-3 font-medium text-gray-700">
                 No requests found

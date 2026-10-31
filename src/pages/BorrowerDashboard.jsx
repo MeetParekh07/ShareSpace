@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Package,
@@ -13,7 +13,17 @@ import {
   RotateCcw,
 } from "lucide-react";
 
-import { borrowerBookings, bookingStatuses } from "../data/bookings";
+import { supabase } from "../lib/supabase";
+import { useAuth } from "../context/AuthContext";
+
+const bookingStatuses = [
+  "all",
+  "pending",
+  "approved",
+  "borrowed",
+  "completed",
+  "rejected",
+];
 
 const statusStyles = {
   pending: "bg-amber-50 text-amber-700 border border-amber-200/60",
@@ -59,7 +69,15 @@ const stats = [
 ];
 
 function formatDate(dateString) {
-  return new Date(`${dateString}T00:00:00`).toLocaleDateString("en-IN", {
+  if (!dateString) return "—";
+
+  const date = new Date(
+    dateString.includes("T") ? dateString : `${dateString}T00:00:00`,
+  );
+
+  if (Number.isNaN(date.getTime())) return "—";
+
+  return date.toLocaleDateString("en-IN", {
     day: "numeric",
     month: "short",
     year: "numeric",
@@ -67,21 +85,112 @@ function formatDate(dateString) {
 }
 
 function BorrowerDashboard() {
+  const { user } = useAuth();
+
   const [activeFilter, setActiveFilter] = useState("all");
   const [search, setSearch] = useState("");
+  const [bookings, setBookings] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function fetchBookings() {
+      if (!user) {
+        if (isMounted) {
+          setBookings([]);
+          setLoading(false);
+        }
+        return;
+      }
+
+      setLoading(true);
+      setError("");
+
+      try {
+        const { data: bookingData, error: bookingError } = await supabase
+          .from("bookings")
+          .select("*")
+          .eq("borrower_id", user.id)
+          .order("requested_at", { ascending: false });
+
+        if (bookingError) throw bookingError;
+
+        const resourceIds = [
+          ...new Set((bookingData || []).map((booking) => booking.resource_id)),
+        ];
+
+        let resources = [];
+
+        if (resourceIds.length > 0) {
+          const { data: resourceData, error: resourceError } = await supabase
+            .from("resources")
+            .select("id, name, category, location")
+            .in("id", resourceIds);
+
+          if (resourceError) throw resourceError;
+
+          resources = resourceData || [];
+        }
+
+        const resourceMap = Object.fromEntries(
+          resources.map((resource) => [resource.id, resource]),
+        );
+
+        const mappedBookings = (bookingData || []).map((booking) => {
+          const resource = resourceMap[booking.resource_id];
+
+          return {
+            id: booking.id,
+            resourceId: booking.resource_id,
+            resourceName: resource?.name || "Resource unavailable",
+            category: resource?.category || "Community resource",
+            owner: "Community member",
+            location: resource?.location || "Location unavailable",
+            startDate: booking.start_date,
+            endDate: booking.end_date,
+            requestedAt: booking.requested_at,
+            purpose: booking.purpose || "No purpose provided",
+            status: booking.status,
+          };
+        });
+
+        if (isMounted) {
+          setBookings(mappedBookings);
+        }
+      } catch (err) {
+        console.error("Error fetching borrower bookings:", err);
+
+        if (isMounted) {
+          setError(err.message || "Unable to load your bookings.");
+        }
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
+    }
+
+    fetchBookings();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [user]);
 
   const counts = useMemo(
     () => ({
-      total: borrowerBookings.length,
-      pending: borrowerBookings.filter((b) => b.status === "pending").length,
-      borrowed: borrowerBookings.filter((b) => b.status === "borrowed").length,
-      completed: borrowerBookings.filter((b) => b.status === "completed").length,
+      total: bookings.length,
+      pending: bookings.filter((b) => b.status === "pending").length,
+      borrowed: bookings.filter((b) => b.status === "borrowed").length,
+      completed: bookings.filter((b) => b.status === "completed").length,
     }),
-    []
+    [bookings],
   );
 
   const filteredBookings = useMemo(() => {
-    let result = [...borrowerBookings];
+    let result = [...bookings];
 
     if (activeFilter !== "all") {
       result = result.filter((booking) => booking.status === activeFilter);
@@ -96,23 +205,43 @@ function BorrowerDashboard() {
           booking.category,
           booking.owner,
           booking.location,
-          booking.id,
-        ].some((value) => value.toLowerCase().includes(query))
+          String(booking.id),
+        ].some((value) =>
+          String(value || "")
+            .toLowerCase()
+            .includes(query),
+        ),
       );
     }
 
     return result.sort(
-      (a, b) => new Date(b.requestedAt) - new Date(a.requestedAt)
+      (a, b) => new Date(b.requestedAt || 0) - new Date(a.requestedAt || 0),
     );
-  }, [activeFilter, search]);
+  }, [bookings, activeFilter, search]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <p className="text-sm font-semibold text-indigo-600">
+          Loading your bookings...
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50/50 to-slate-100/50 pb-16 pt-4 sm:pt-6">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-        
+        {error && (
+          <div className="mb-5 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+            {error}
+          </div>
+        )}
+
         {/* Dashboard Heading Banner */}
         <section className="relative overflow-hidden rounded-2xl sm:rounded-3xl bg-gradient-to-r from-indigo-700 via-indigo-600 to-violet-600 px-5 py-8 text-white shadow-xl sm:px-10 sm:py-10">
           <div className="absolute -right-10 -top-10 h-48 w-48 sm:h-64 sm:w-64 rounded-full bg-white/10 blur-3xl pointer-events-none" />
+
           <div className="relative z-10">
             <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1 text-[11px] sm:text-xs font-semibold uppercase tracking-wider text-indigo-100 backdrop-blur-md">
               Borrower workspace
@@ -150,7 +279,9 @@ function BorrowerDashboard() {
                 className="group relative overflow-hidden rounded-xl sm:rounded-2xl border border-slate-200/80 bg-white p-4 sm:p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
               >
                 <div className="flex items-center justify-between gap-2">
-                  <div className={`rounded-xl p-2.5 sm:p-3 transition-transform group-hover:scale-110 ${stat.color}`}>
+                  <div
+                    className={`rounded-xl p-2.5 sm:p-3 transition-transform group-hover:scale-110 ${stat.color}`}
+                  >
                     <Icon className="h-5 w-5 sm:h-6 sm:w-6" />
                   </div>
 
@@ -174,6 +305,7 @@ function BorrowerDashboard() {
               <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900">
                 My bookings
               </h2>
+
               <p className="mt-0.5 text-xs sm:text-sm text-slate-500">
                 View and track all your active or past borrowing activity.
               </p>
@@ -187,6 +319,7 @@ function BorrowerDashboard() {
           {/* Search Bar */}
           <div className="mt-5 sm:mt-6 flex items-center gap-2.5 rounded-xl sm:rounded-2xl border border-slate-200/85 bg-white px-3.5 sm:px-4 shadow-sm transition-all focus-within:border-indigo-500 focus-within:ring-4 focus-within:ring-indigo-500/10">
             <Search className="h-4 w-4 sm:h-5 sm:w-5 shrink-0 text-slate-400" />
+
             <input
               type="search"
               value={search}
@@ -239,24 +372,29 @@ function BorrowerDashboard() {
 
                     <span
                       className={`self-start sm:self-auto rounded-full px-3 py-1 text-[11px] sm:text-xs font-bold uppercase tracking-wider ${
-                        statusStyles[booking.status]
+                        statusStyles[booking.status] ||
+                        "bg-slate-100 text-slate-600"
                       }`}
                     >
-                      {statusLabels[booking.status]}
+                      {statusLabels[booking.status] || booking.status}
                     </span>
                   </div>
 
-                  {/* Mobile-optimized single-column stacking grid */}
+                  {/* Booking Details */}
                   <div className="mt-4 sm:mt-6 grid grid-cols-1 gap-3 sm:gap-4 rounded-xl bg-slate-50/70 p-3.5 sm:p-4 border border-slate-100 sm:grid-cols-2 lg:grid-cols-4">
                     <div>
-                      <p className="text-[11px] sm:text-xs font-semibold uppercase tracking-wider text-slate-400">Resource owner</p>
+                      <p className="text-[11px] sm:text-xs font-semibold uppercase tracking-wider text-slate-400">
+                        Resource owner
+                      </p>
                       <p className="mt-0.5 sm:mt-1 text-xs sm:text-sm font-bold text-slate-800">
                         {booking.owner}
                       </p>
                     </div>
 
                     <div>
-                      <p className="text-[11px] sm:text-xs font-semibold uppercase tracking-wider text-slate-400">Location</p>
+                      <p className="text-[11px] sm:text-xs font-semibold uppercase tracking-wider text-slate-400">
+                        Location
+                      </p>
                       <p className="mt-0.5 sm:mt-1 flex items-center gap-1.5 text-xs sm:text-sm font-bold text-slate-800">
                         <MapPin className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-indigo-500 shrink-0" />
                         <span className="truncate">{booking.location}</span>
@@ -264,30 +402,40 @@ function BorrowerDashboard() {
                     </div>
 
                     <div>
-                      <p className="text-[11px] sm:text-xs font-semibold uppercase tracking-wider text-slate-400">Borrowing period</p>
+                      <p className="text-[11px] sm:text-xs font-semibold uppercase tracking-wider text-slate-400">
+                        Borrowing period
+                      </p>
                       <p className="mt-0.5 sm:mt-1 flex items-center gap-1.5 text-xs sm:text-sm font-bold text-slate-800">
                         <CalendarDays className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-indigo-500 shrink-0" />
-                        <span className="truncate">{formatDate(booking.startDate)} – {formatDate(booking.endDate)}</span>
+                        <span className="truncate">
+                          {formatDate(booking.startDate)} –{" "}
+                          {formatDate(booking.endDate)}
+                        </span>
                       </p>
                     </div>
 
                     <div>
-                      <p className="text-[11px] sm:text-xs font-semibold uppercase tracking-wider text-slate-400">Requested on</p>
+                      <p className="text-[11px] sm:text-xs font-semibold uppercase tracking-wider text-slate-400">
+                        Requested on
+                      </p>
                       <p className="mt-0.5 sm:mt-1 text-xs sm:text-sm font-bold text-slate-800">
                         {formatDate(booking.requestedAt)}
                       </p>
                     </div>
                   </div>
 
+                  {/* Purpose */}
                   <div className="mt-3.5 sm:mt-4 rounded-xl border border-slate-100 bg-white p-3.5 sm:p-4">
                     <p className="text-[11px] sm:text-xs font-bold uppercase tracking-wider text-slate-400">
                       Borrowing purpose
                     </p>
+
                     <p className="mt-1 text-xs sm:text-sm leading-relaxed text-slate-600">
                       {booking.purpose}
                     </p>
                   </div>
 
+                  {/* Footer */}
                   <div className="mt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-t border-slate-100 pt-4">
                     <Link
                       to={`/resources/${booking.resourceId}`}
@@ -318,6 +466,13 @@ function BorrowerDashboard() {
                           Waiting for owner approval
                         </span>
                       )}
+
+                      {booking.status === "approved" && (
+                        <span className="inline-flex items-center gap-1.5 rounded-lg bg-blue-50 px-3 py-1.5 text-xs font-bold text-blue-700">
+                          <CheckCircle2 className="h-4 w-4" />
+                          Approved by owner
+                        </span>
+                      )}
                     </div>
                   </div>
                 </article>
@@ -334,13 +489,14 @@ function BorrowerDashboard() {
               </h3>
 
               <p className="mt-1.5 text-xs sm:text-sm text-slate-500">
-                Try modifying your search query or select a different booking status filter tab.
+                Try modifying your search query or select a different booking
+                status filter tab.
               </p>
 
               <button
                 type="button"
                 onClick={() => {
-                  search("");
+                  setSearch("");
                   setActiveFilter("all");
                 }}
                 className="mt-5 inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-xs sm:text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50 active:scale-95"

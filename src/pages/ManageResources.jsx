@@ -1,5 +1,5 @@
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Plus,
@@ -13,11 +13,9 @@ import {
   Save,
 } from "lucide-react";
 
-import { useAppContext } from "../context/AppContext";
-import {
-  resourceCategories,
-  resourceLocations,
-} from "../data/ownerData";
+import { supabase } from "../lib/supabase";
+import { useAuth } from "../context/AuthContext";
+import { resourceCategories, resourceLocations } from "../data/ownerData";
 
 const initialFormData = {
   name: "",
@@ -30,12 +28,54 @@ const initialFormData = {
 };
 
 function ManageResources() {
-  const { resources, addResource, updateResource, deleteResource } =
-    useAppContext();
+  const { user } = useAuth();
 
+  const [resources, setResources] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [formData, setFormData] = useState(initialFormData);
+
+  // Fetch resources belonging to the logged-in owner
+  const loadResources = async () => {
+    if (!user) {
+      setResources([]);
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const { data, error } = await supabase
+        .from("resources")
+        .select("*")
+        .eq("owner_id", user.id)
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+
+      setResources(
+        (data || []).map((item) => ({
+          ...item,
+          totalCopies: item.total_copies,
+          maxBorrowDays: item.max_borrow_days ?? 5,
+          status: item.is_active ? "available" : "inactive",
+        }))
+      );
+    } catch (error) {
+      console.error("Loading resources failed:", error);
+      alert("Could not load resources: " + error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadResources();
+  }, [user]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -52,48 +92,143 @@ function ManageResources() {
     setShowForm(false);
   };
 
-  const handleSubmit = (e) => {
+  // Add or update a resource
+  const handleSubmit = async (e) => {
     e.preventDefault();
 
-    const resourceData = {
-      ...formData,
-      totalCopies: Number(formData.totalCopies),
-      maxBorrowDays: Number(formData.maxBorrowDays),
-    };
-
-    if (editingId) {
-      updateResource(editingId, resourceData);
-    } else {
-      addResource(resourceData);
+    if (!user) {
+      alert("Please log in first.");
+      return;
     }
 
-    resetForm();
+    if (saving) return;
+
+    setSaving(true);
+
+    const resourceData = {
+      name: formData.name.trim(),
+      category: formData.category,
+      description: formData.description.trim(),
+      location: formData.location,
+      condition: formData.condition,
+      total_copies: Number(formData.totalCopies),
+      max_borrow_days: Number(formData.maxBorrowDays),
+    };
+
+    try {
+      if (editingId) {
+        // Update existing resource
+        const { data, error } = await supabase
+          .from("resources")
+          .update(resourceData)
+          .eq("id", editingId)
+          .eq("owner_id", user.id)
+          .select();
+
+        if (error) throw error;
+
+        if (!data || data.length === 0) {
+          throw new Error(
+            "Resource was not updated. Check your Supabase UPDATE policy and resource ownership."
+          );
+        }
+
+        alert("Resource updated successfully!");
+      } else {
+        // Add new resource
+        const { data, error } = await supabase
+          .from("resources")
+          .insert([
+            {
+              ...resourceData,
+              owner_id: user.id,
+              is_active: true,
+            },
+          ])
+          .select();
+
+        if (error) throw error;
+
+        if (!data || data.length === 0) {
+          throw new Error("Resource could not be added.");
+        }
+
+        alert("Resource added successfully!");
+      }
+
+      resetForm();
+      await loadResources();
+    } catch (error) {
+      console.error("Saving resource failed:", error);
+      alert("Could not save resource: " + error.message);
+    } finally {
+      setSaving(false);
+    }
   };
 
+  // Load resource details into the form for editing
   const handleEdit = (resource) => {
     setFormData({
-      name: resource.name,
-      category: resource.category,
-      description: resource.description,
-      location: resource.location,
-      condition: resource.condition,
-      totalCopies: resource.totalCopies,
-      maxBorrowDays: resource.maxBorrowDays,
+      name: resource.name || "",
+      category: resource.category || "Electronics",
+      description: resource.description || "",
+      location: resource.location || "Ahmedabad",
+      condition: resource.condition || "Good",
+      totalCopies: resource.total_copies ?? 1,
+      maxBorrowDays: resource.max_borrow_days ?? 5,
     });
 
     setEditingId(resource.id);
     setShowForm(true);
 
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    window.scrollTo({
+      top: 0,
+      behavior: "smooth",
+    });
   };
 
-  const handleDelete = (resourceId) => {
+  // Delete a resource
+  const handleDelete = async (resourceId) => {
+    if (!user || deletingId) return;
+
     const confirmed = window.confirm(
       "Are you sure you want to delete this resource?"
     );
 
-    if (confirmed) {
-      deleteResource(resourceId);
+    if (!confirmed) return;
+
+    setDeletingId(resourceId);
+
+    try {
+      const { data, error } = await supabase
+        .from("resources")
+        .delete()
+        .eq("id", resourceId)
+        .eq("owner_id", user.id)
+        .select();
+
+      if (error) throw error;
+
+      if (!data || data.length === 0) {
+        throw new Error(
+          "Resource was not deleted. Check your Supabase DELETE policy and resource ownership."
+        );
+      }
+
+      setResources((prev) =>
+        prev.filter((resource) => resource.id !== resourceId)
+      );
+
+      if (editingId === resourceId) {
+        resetForm();
+      }
+
+      alert("Resource deleted successfully!");
+    } catch (error) {
+      console.error("Deleting resource failed:", error);
+      alert("Could not delete resource: " + error.message);
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -145,6 +280,7 @@ function ManageResources() {
               </h2>
 
               <button
+                type="button"
                 onClick={resetForm}
                 className="rounded-lg p-2 text-gray-500 hover:bg-gray-100"
                 aria-label="Close form"
@@ -296,10 +432,15 @@ function ManageResources() {
 
                 <button
                   type="submit"
-                  className="inline-flex items-center gap-2 rounded-lg bg-green-700 px-5 py-3 font-semibold text-white hover:bg-green-800"
+                  disabled={saving}
+                  className="inline-flex items-center gap-2 rounded-lg bg-green-700 px-5 py-3 font-semibold text-white hover:bg-green-800 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <Save size={18} />
-                  {editingId ? "Update Resource" : "Add Resource"}
+                  {saving
+                    ? "Saving..."
+                    : editingId
+                      ? "Update Resource"
+                      : "Add Resource"}
                 </button>
               </div>
             </form>
@@ -312,6 +453,7 @@ function ManageResources() {
             <h2 className="text-xl font-bold text-gray-900">
               Your Resources
             </h2>
+
             <p className="mt-1 text-sm text-gray-500">
               {resources.length} resources listed
             </p>
@@ -323,7 +465,11 @@ function ManageResources() {
         </div>
 
         {/* Resource List */}
-        {resources.length === 0 ? (
+        {loading ? (
+          <p className="py-10 text-center text-gray-500">
+            Loading resources...
+          </p>
+        ) : resources.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-gray-300 bg-white px-6 py-16 text-center">
             <Package className="mx-auto text-gray-400" size={42} />
 
@@ -336,7 +482,11 @@ function ManageResources() {
             </p>
 
             <button
-              onClick={() => setShowForm(true)}
+              onClick={() => {
+                setEditingId(null);
+                setFormData(initialFormData);
+                setShowForm(true);
+              }}
               className="mt-5 rounded-lg bg-green-700 px-5 py-3 font-semibold text-white hover:bg-green-800"
             >
               Add Your First Resource
@@ -398,6 +548,7 @@ function ManageResources() {
 
                 <div className="mt-5 flex gap-3 border-t border-gray-100 pt-4">
                   <button
+                    type="button"
                     onClick={() => handleEdit(resource)}
                     className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg border border-gray-300 px-3 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50"
                   >
@@ -406,11 +557,13 @@ function ManageResources() {
                   </button>
 
                   <button
+                    type="button"
                     onClick={() => handleDelete(resource.id)}
-                    className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg border border-red-200 px-3 py-2.5 text-sm font-semibold text-red-600 hover:bg-red-50"
+                    disabled={deletingId === resource.id}
+                    className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg border border-red-200 px-3 py-2.5 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <Trash2 size={16} />
-                    Delete
+                    {deletingId === resource.id ? "Deleting..." : "Delete"}
                   </button>
                 </div>
               </div>

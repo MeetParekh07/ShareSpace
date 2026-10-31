@@ -1,5 +1,5 @@
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   ArrowLeft,
@@ -19,7 +19,8 @@ import {
   Info,
 } from "lucide-react";
 
-import { resources } from "../data/resources";
+import { supabase } from "../lib/supabase";
+import { useAuth } from "../context/AuthContext";
 import Button from "../components/ui/Button";
 
 const categoryIcons = {
@@ -51,14 +52,89 @@ function getToday() {
 
 function ResourceDetails() {
   const { id } = useParams();
+  const { user } = useAuth();
 
-  const resource = resources.find((item) => item.id === id);
+  const [resource, setResource] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState("");
 
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [purpose, setPurpose] = useState("");
   const [error, setError] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  // Fetch resource from Supabase
+  useEffect(() => {
+    async function fetchResource() {
+      setLoading(true);
+      setFetchError("");
+
+      const { data, error: resourceError } = await supabase
+        .from("resources")
+        .select("*")
+        .eq("id", id)
+        .maybeSingle();
+
+      if (resourceError) {
+        console.error("Resource fetch error:", resourceError);
+        setFetchError("Unable to load this resource. Please try again.");
+        setResource(null);
+      } else if (!data) {
+        setResource(null);
+      } else {
+        setResource({
+          ...data,
+          maxBorrowDays: Number(data.max_borrow_days || 5),
+          totalCopies: Number(data.total_copies || 0),
+          availability:
+            data.is_active && Number(data.total_copies) > 0
+              ? "Available"
+              : "Unavailable",
+          owner: "Community member",
+        });
+      }
+
+      setLoading(false);
+    }
+
+    fetchResource();
+  }, [id]);
+
+  // Loading state
+  if (loading) {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <p className="text-sm font-medium text-slate-500">
+          Loading resource details...
+        </p>
+      </div>
+    );
+  }
+
+  // Fetch error
+  if (fetchError) {
+    return (
+      <div className="mx-auto max-w-xl py-20 text-center">
+        <Package className="mx-auto h-12 w-12 text-slate-300" />
+
+        <h1 className="mt-5 text-2xl font-bold text-slate-900">
+          Something went wrong
+        </h1>
+
+        <p className="mt-2 text-sm text-slate-500">{fetchError}</p>
+
+        <Link
+          to="/explore"
+          className="mt-6 inline-flex items-center gap-2 font-semibold text-brand-600 hover:text-brand-700"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back to Explore
+        </Link>
+      </div>
+    );
+  }
 
   // Resource not found
   if (!resource) {
@@ -88,14 +164,19 @@ function ResourceDetails() {
   const Icon = categoryIcons[resource.category] || Package;
 
   const iconColor =
-    categoryColors[resource.category] ||
-    "bg-indigo-100 text-indigo-600";
+    categoryColors[resource.category] || "bg-indigo-100 text-indigo-600";
 
   const isAvailable = resource.availability === "Available";
 
-  function handleSubmit(event) {
+  // Submit borrow request to Supabase
+  async function handleSubmit(event) {
     event.preventDefault();
     setError("");
+
+    if (!user) {
+      setError("Please log in to submit a borrow request.");
+      return;
+    }
 
     if (!isAvailable) {
       setError("This resource is currently not available.");
@@ -130,8 +211,35 @@ function ResourceDetails() {
       return;
     }
 
-    // Demo only. Real booking requests will be saved in Supabase later.
-    setSubmitted(true);
+    setSubmitting(true);
+
+    try {
+      const { error: bookingError } = await supabase
+        .from("bookings")
+        .insert([
+          {
+            resource_id: resource.id,
+            borrower_id: user.id,
+            start_date: startDate,
+            end_date: endDate,
+            purpose: purpose.trim(),
+            status: "pending",
+          },
+        ]);
+
+      if (bookingError) {
+        console.error("Booking error:", bookingError);
+        setError(bookingError.message);
+        return;
+      }
+
+      setSubmitted(true);
+    } catch (err) {
+      console.error("Unexpected booking error:", err);
+      setError("Something went wrong. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   function resetRequest() {
@@ -189,11 +297,19 @@ function ResourceDetails() {
           {/* Left: Resource information */}
           <div className="space-y-6">
 
-            {/* Resource visual */}
-            <div className="flex min-h-72 items-center justify-center rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-100 to-indigo-50 sm:min-h-96">
-              <div className={`rounded-3xl p-10 ${iconColor}`}>
-                <Icon className="h-24 w-24" strokeWidth={1.5} />
-              </div>
+            {/* Resource image */}
+            <div className="flex min-h-72 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-100 to-indigo-50 sm:min-h-96">
+              {resource.image_url ? (
+                <img
+                  src={resource.image_url}
+                  alt={resource.name}
+                  className="h-full max-h-96 w-full object-cover"
+                />
+              ) : (
+                <div className={`rounded-3xl p-10 ${iconColor}`}>
+                  <Icon className="h-24 w-24" strokeWidth={1.5} />
+                </div>
+              )}
             </div>
 
             {/* Description */}
@@ -214,7 +330,7 @@ function ResourceDetails() {
                   </div>
 
                   <p className="mt-2 font-semibold text-slate-900">
-                    {resource.condition}
+                    {resource.condition || "Not specified"}
                   </p>
                 </div>
 
@@ -303,9 +419,9 @@ function ResourceDetails() {
                   </h2>
 
                   <p className="mt-3 text-sm leading-6 text-slate-500">
-                    Your demo borrowing request for{" "}
-                    <strong>{resource.name}</strong> has been submitted.
-                    The owner would review it and respond.
+                    Your borrowing request for{" "}
+                    <strong>{resource.name}</strong> has been saved
+                    successfully. The owner can now review your request.
                   </p>
 
                   <div className="mt-5 rounded-xl bg-slate-50 p-4 text-left text-sm">
@@ -354,7 +470,7 @@ function ResourceDetails() {
                       </p>
 
                       <p className="mt-1 text-xs leading-5 text-amber-700">
-                        This resource is currently borrowed. Please check
+                        This resource is currently unavailable. Please check
                         back later.
                       </p>
                     </div>
@@ -466,9 +582,17 @@ function ResourceDetails() {
                         </p>
                       )}
 
-                      <Button type="submit" size="lg" className="w-full">
-                        Request to borrow
-                        <ArrowRight className="h-4 w-4" />
+                      {/* Submit button */}
+                      <Button
+                        type="submit"
+                        size="lg"
+                        className="w-full"
+                        disabled={submitting}
+                      >
+                        {submitting ? "Submitting..." : "Request to borrow"}
+                        {!submitting && (
+                          <ArrowRight className="h-4 w-4" />
+                        )}
                       </Button>
 
                       <p className="text-center text-xs leading-5 text-slate-400">
