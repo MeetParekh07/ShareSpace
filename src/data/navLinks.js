@@ -11,5 +11,5 @@ export const navLinks = [
     label: "Dashboard",
     path: "/borrower/dashboard",
   },
-  { label: "Owner Dashboard", path: "/owner/dashboard" },
+  { label: "Dashboard", path: "/owner/dashboard" },
 ];

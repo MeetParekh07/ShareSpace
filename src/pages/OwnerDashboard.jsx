@@ -235,7 +235,7 @@ function OwnerDashboard() {
             </p>
 
             <h1 className="mt-1 text-3xl font-bold text-gray-900">
-              Owner Dashboard
+              Dashboard
             </h1>
 
             <p className="mt-2 text-gray-500">

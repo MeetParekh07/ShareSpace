@@ -1,6 +1,5 @@
-
 import { Link } from "react-router-dom";
-import { Share2,  ArrowUpRight } from "lucide-react";
+import { Share2, ArrowUpRight } from "lucide-react";
 
 function Footer() {
   const currentYear = new Date().getFullYear();
@@ -12,16 +11,13 @@ function Footer() {
     });
   };
 
-  const linkStyle =
-    "text-sm text-slate-500 transition hover:text-indigo-600";
+  const linkStyle = "text-sm text-slate-500 transition hover:text-indigo-600";
 
   return (
     <footer className="border-t border-slate-200 bg-white">
       <div className="mx-auto max-w-6xl px-5 pt-10 pb-6 sm:px-8">
-
         {/* Main Footer */}
         <div className="flex flex-col justify-between gap-8 sm:flex-row sm:items-start">
-
           {/* Brand */}
           <div className="max-w-sm">
             <Link
@@ -39,8 +35,8 @@ function Footer() {
             </Link>
 
             <p className="mt-3 text-sm leading-6 text-slate-500">
-              Don't buy it. Share it instead.
-              Share resources, save money, and build stronger communities.
+              Don't buy it. Share it instead. Share resources, save money, and
+              build stronger communities.
             </p>
           </div>
 
@@ -51,11 +47,7 @@ function Footer() {
             </h3>
 
             <div className="flex flex-col gap-3">
-              <Link
-                to="/"
-                onClick={handleNavigation}
-                className={linkStyle}
-              >
+              <Link to="/" onClick={handleNavigation} className={linkStyle}>
                 Home
               </Link>
 
@@ -86,9 +78,7 @@ function Footer() {
             © {currentYear} ShareSpace. All rights reserved.
           </p>
 
-          <p className="text-xs text-slate-500">
-            Built for the community.
-          </p>
+          <p className="text-xs text-slate-500">Built for the community.</p>
         </div>
       </div>
     </footer>
